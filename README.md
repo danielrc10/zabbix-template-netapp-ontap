@@ -3,30 +3,45 @@
 [![Validar / Validate](https://github.com/danielrc10/zabbix-template-netapp-ontap/actions/workflows/validate.yml/badge.svg)](https://github.com/danielrc10/zabbix-template-netapp-ontap/actions/workflows/validate.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-[Catálogo Projetos Zabbix](https://github.com/danielrc10/projetos-zabbix)
-
-[Português](#português) · [English](#english)
+[Catálogo Projetos Zabbix](https://github.com/danielrc10/projetos-zabbix) · [Português](#português) · [English](#english)
 
 ## Português
 
-Template API-first para monitorar clusters NetApp ONTAP no Zabbix. Uma única vinculação cobre cluster, nós, CPU, memória, HA, NVRAM, discos, agregados, volumes, LUNs, SVMs, SnapMirror, Ethernet, Fibre Channel, shelves, fontes, ventoinhas, sensores, AutoSupport, EMS, quotas e File System Analytics (FSA).
+Template Zabbix 7.4+ para monitoramento completo do NetApp ONTAP por REST API: cluster, nós, CPU, memória, discos, agregados, volumes, rede, FC, shelves, fontes, fans, sensores, SnapMirror, AutoSupport, EMS, quotas e FSA.
 
-### Versões
+**[Baixar template YAML](zabbix-7.4/template/template_netapp_ontap_complete_http.yaml)**
 
-| Zabbix | Template | Estado | Arquivos |
-|---|---:|---|---|
-| 7.4+ | `1.0.0` | Validado estruturalmente | [Abrir versão 7.4](zabbix-7.4/README.md) |
+### Macros obrigatórias
 
-Este é um projeto independente, derivado e amplamente estendido a partir do template oficial `NetApp AFF A700 by HTTP` do Zabbix. Consulte [NOTICE.md](NOTICE.md) e [LICENSE](LICENSE).
+| Macro | Exemplo |
+|---|---|
+| `{$NETAPP.URL}` | `https://cluster.example.com` |
+| `{$NETAPP.USERNAME}` | `zabbix-readonly` |
+| `{$NETAPP.PASSWORD}` | senha secreta no host |
+
+### Opcional
+
+FSA e quotas não selecionam volumes até você configurar:
+
+```text
+# Um volume
+{$NETAPP.FSA.VOLUME.MATCHES}=^volume_users$
+
+# Vários volumes
+{$NETAPP.FSA.VOLUME.MATCHES}=^(volume_users|volume_projects)$
+
+# Quotas
+{$NETAPP.QUOTA.VOLUME.MATCHES}=^(volume_users|volume_projects)$
+```
+
+As demais macros já possuem valores padrão. Veja a [referência rápida e instalação](zabbix-7.4/README.md).
 
 ## English
 
-API-first template for monitoring NetApp ONTAP clusters with Zabbix. A single linked template covers the cluster, nodes, CPU, memory, HA, NVRAM, disks, aggregates, volumes, LUNs, SVMs, SnapMirror, Ethernet, Fibre Channel, shelves, power supplies, fans, sensors, AutoSupport, EMS, quotas, and File System Analytics (FSA).
+Zabbix 7.4+ template for comprehensive NetApp ONTAP REST API monitoring: cluster, nodes, CPU, memory, disks, aggregates, volumes, network, FC, shelves, PSUs, fans, sensors, SnapMirror, AutoSupport, EMS, quotas, and FSA.
 
-### Versions
+**[Download the YAML template](zabbix-7.4/template/template_netapp_ontap_complete_http.yaml)**
 
-| Zabbix | Template | Status | Files |
-|---|---:|---|---|
-| 7.4+ | `1.0.0` | Structurally validated | [Open version 7.4](zabbix-7.4/README.md#english) |
+Required host macros: `{$NETAPP.URL}`, `{$NETAPP.USERNAME}`, and secret `{$NETAPP.PASSWORD}`. FSA and quotas are optional; select their volumes with `{$NETAPP.FSA.VOLUME.MATCHES}` and `{$NETAPP.QUOTA.VOLUME.MATCHES}`. See the [quick reference](zabbix-7.4/README.md#english).
 
-This independent project is derived and extensively extended from Zabbix's official `NetApp AFF A700 by HTTP` template. See [NOTICE.md](NOTICE.md) and [LICENSE](LICENSE).
+Derived from Zabbix's official `NetApp AFF A700 by HTTP` template. See [NOTICE.md](NOTICE.md) and [LICENSE](LICENSE).
