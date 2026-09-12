@@ -1,0 +1,24 @@
+# PT-BR: Validação contínua do template NetApp ONTAP.
+# EN: Continuous validation of the NetApp ONTAP template.
+
+name: Validar template / Validate template
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: NetApp ONTAP — Zabbix 7.4
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obter código / Check out code
+        uses: actions/checkout@v5
+      - name: Gerar e validar / Generate and validate
+        run: |
+          ruby zabbix-7.4/tools/generate_template.rb
+          git diff --exit-code -- zabbix-7.4/template/template_netapp_ontap_complete_http.yaml
+          ruby zabbix-7.4/tools/validate_template.rb
