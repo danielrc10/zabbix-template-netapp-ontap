@@ -274,7 +274,7 @@ template['description'] = <<~DESC
   em uma única chamada. Pastas sem acesso nem modificação geram Warning após um ano e High após
   três anos, conforme as macros de inatividade.
 DESC
-template['vendor'] = { 'name' => 'Daniel Carvalho', 'version' => '1.0.0' }
+template['vendor'] = { 'name' => 'Daniel Carvalho', 'version' => '1.1.0' }
 template['tags'] = [
   { 'tag' => 'class', 'value' => 'storage' },
   { 'tag' => 'target', 'value' => 'netapp' },
@@ -1781,6 +1781,68 @@ items << dependent_item(
   )]
 )
 
+fsa_inactive_bytes_script = <<~JS
+  var data = JSON.parse(value);
+  if (data.error) throw data.error;
+  var records = data.records || [];
+  var threshold = parseInt('{$NETAPP.FSA.INACTIVE.WARN.DAYS}', 10);
+  if (isNaN(threshold) || threshold < 1) threshold = 365;
+  var candidates = [];
+
+  function cleanPath(path) {
+    var cleaned = String(path || '');
+    while (cleaned.indexOf('./') === 0) cleaned = cleaned.substring(2);
+    while (cleaned.charAt(0) === '/') cleaned = cleaned.substring(1);
+    while (cleaned.length && cleaned.charAt(cleaned.length - 1) === '/') {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    return cleaned;
+  }
+
+  for (var i = 0; i < records.length; i++) {
+    var r = records[i] || {};
+    var days = Number(r.inactivity_days);
+    var bytes = Number(r.bytes_used);
+    var path = cleanPath(r.path || r.display_path);
+    if (isNaN(days) || days < threshold || isNaN(bytes) || bytes <= 0 || !path) continue;
+    candidates.push({
+      volume: String(r.volume_uuid || r.volume_name || 'unknown'),
+      path: path,
+      depth: Number(r.depth) || path.split('/').length,
+      bytes: Math.round(bytes)
+    });
+  }
+
+  candidates.sort(function (a, b) {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    if (a.volume !== b.volume) return a.volume < b.volume ? -1 : 1;
+    return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0);
+  });
+
+  var selected = {};
+  var total = 0;
+  for (var j = 0; j < candidates.length; j++) {
+    var candidate = candidates[j];
+    var prefix = candidate.volume + ':';
+    var parts = candidate.path.split('/');
+    var ancestor = '';
+    var covered = selected[prefix + candidate.path] === 1;
+    for (var p = 0; p < parts.length - 1 && !covered; p++) {
+      ancestor = ancestor ? ancestor + '/' + parts[p] : parts[p];
+      if (selected[prefix + ancestor] === 1) covered = true;
+    }
+    if (covered) continue;
+    selected[prefix + candidate.path] = 1;
+    total += candidate.bytes;
+  }
+  return total;
+JS
+items << dependent_item(
+  name: 'FSA: Espaço total de pastas inativas', key: 'netapp.fsa.inactive.bytes.total', master: fsa_master_key,
+  preprocessing: javascript(fsa_inactive_bytes_script), component: 'fsa', units: 'B',
+  description: 'Soma informativa, sem trigger, dos diretórios com inatividade igual ou superior a {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias. Diretórios descendentes já cobertos por um pai inativo não são somados novamente.'
+)
+
 fsa_directory_path = lambda do |field|
   "$.records[?(@.id=='{#DIRID}')].#{field}.first()"
 end
@@ -1789,8 +1851,9 @@ fsa_directory_tags = {
   'parent' => '{#PARENTDISPLAY}', 'depth' => '{#DIRDEPTH}'
 }
 fsa_directory_prototypes = []
+fsa_bytes_key = 'netapp.fsa.directory.bytes_used[{#DIRID}]'
 fsa_directory_prototypes << dependent_proto(
-  name: 'FSA [{#VOLUMENAME}] {#DIRDISPLAY}: Size used', key: 'netapp.fsa.directory.bytes_used[{#DIRID}]',
+  name: 'FSA [{#VOLUMENAME}] {#DIRDISPLAY}: Size used', key: fsa_bytes_key,
   master: fsa_master_key, preprocessing: jsonpath(fsa_directory_path.call('bytes_used')),
   component: 'fsa-directory', units: 'B', extra_tags: fsa_directory_tags
 )
@@ -1843,23 +1906,23 @@ fsa_directory_prototypes << dependent_proto(
   triggers: [
     proto_trigger(
       id: 'fsa-directory-inactive-high',
-      expression: "last(/#{TEMPLATE}/#{fsa_inactivity_key})>={$NETAPP.FSA.INACTIVE.CRIT.DAYS}",
+      expression: "last(/#{TEMPLATE}/#{fsa_bytes_key})>=0 and last(/#{TEMPLATE}/#{fsa_inactivity_key})>={$NETAPP.FSA.INACTIVE.CRIT.DAYS}",
       recovery_expression: "last(/#{TEMPLATE}/#{fsa_inactivity_key})<{$NETAPP.FSA.INACTIVE.CRIT.DAYS}",
       name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 3 anos',
       priority: 'HIGH', scope: 'capacity',
       description: 'A faixa FSA mais recente tanto de acesso quanto de modificação terminou há pelo menos {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias. Uma pasta apenas sem modificação não dispara se houve acesso recente.',
-      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 3 anos | inatividade: {ITEM.VALUE1}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
-      opdata: 'Inatividade atual: {ITEM.LASTVALUE1}; limite: {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias'
+      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 3 anos | tamanho: {ITEM.VALUE1}; inatividade: {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
+      opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade atual: {ITEM.LASTVALUE2}; limite: {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias'
     ),
     proto_trigger(
       id: 'fsa-directory-inactive-warning',
-      expression: "last(/#{TEMPLATE}/#{fsa_inactivity_key})>={$NETAPP.FSA.INACTIVE.WARN.DAYS} and last(/#{TEMPLATE}/#{fsa_inactivity_key})<{$NETAPP.FSA.INACTIVE.CRIT.DAYS}",
+      expression: "last(/#{TEMPLATE}/#{fsa_bytes_key})>=0 and last(/#{TEMPLATE}/#{fsa_inactivity_key})>={$NETAPP.FSA.INACTIVE.WARN.DAYS} and last(/#{TEMPLATE}/#{fsa_inactivity_key})<{$NETAPP.FSA.INACTIVE.CRIT.DAYS}",
       recovery_expression: "last(/#{TEMPLATE}/#{fsa_inactivity_key})<{$NETAPP.FSA.INACTIVE.WARN.DAYS} or last(/#{TEMPLATE}/#{fsa_inactivity_key})>={$NETAPP.FSA.INACTIVE.CRIT.DAYS}",
       name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 1 ano',
       priority: 'WARNING', scope: 'capacity',
       description: 'A faixa FSA mais recente tanto de acesso quanto de modificação terminou há pelo menos {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias. Uma pasta apenas sem modificação não dispara se houve acesso recente.',
-      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 1 ano | inatividade: {ITEM.VALUE1}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
-      opdata: 'Inatividade atual: {ITEM.LASTVALUE1}; limite: {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias'
+      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 1 ano | tamanho: {ITEM.VALUE1}; inatividade: {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
+      opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade atual: {ITEM.LASTVALUE2}; limite: {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias'
     )
   ]
 )

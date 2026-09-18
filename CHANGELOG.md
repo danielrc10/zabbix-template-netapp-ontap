@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.0] - 2026-09-18
+
+### Added
+
+- Directory size in one-year and three-year FSA inactivity event names.
+- Informational `FSA: Espaço total de pastas inativas` item, summing directories at or above the Warning inactivity threshold without nested-directory double counting.
+
 ## [1.0.0] - 2026-09-12
 
 ### Added

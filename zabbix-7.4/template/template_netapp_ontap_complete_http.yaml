@@ -31,7 +31,7 @@ zabbix_export:
       três anos, conforme as macros de inatividade.
     vendor:
       name: Daniel Carvalho
-      version: 1.0.0
+      version: 1.1.0
     groups:
     - name: Templates/SAN
     items:
@@ -1580,6 +1580,77 @@ zabbix_export:
         event_name: 'NetApp ONTAP: relatório de quotas excedeu o limite de registros
           | valor no disparo: {ITEM.VALUE1}'
         opdata: 'Valor atual: {ITEM.LASTVALUE1}'
+    - uuid: 585c8f3bbfb2474984184a99fafc6a5a
+      name: 'FSA: Espaço total de pastas inativas'
+      type: DEPENDENT
+      key: netapp.fsa.inactive.bytes.total
+      preprocessing:
+      - type: JAVASCRIPT
+        parameters:
+        - |
+          var data = JSON.parse(value);
+          if (data.error) throw data.error;
+          var records = data.records || [];
+          var threshold = parseInt('{$NETAPP.FSA.INACTIVE.WARN.DAYS}', 10);
+          if (isNaN(threshold) || threshold < 1) threshold = 365;
+          var candidates = [];
+
+          function cleanPath(path) {
+            var cleaned = String(path || '');
+            while (cleaned.indexOf('./') === 0) cleaned = cleaned.substring(2);
+            while (cleaned.charAt(0) === '/') cleaned = cleaned.substring(1);
+            while (cleaned.length && cleaned.charAt(cleaned.length - 1) === '/') {
+              cleaned = cleaned.substring(0, cleaned.length - 1);
+            }
+            return cleaned;
+          }
+
+          for (var i = 0; i < records.length; i++) {
+            var r = records[i] || {};
+            var days = Number(r.inactivity_days);
+            var bytes = Number(r.bytes_used);
+            var path = cleanPath(r.path || r.display_path);
+            if (isNaN(days) || days < threshold || isNaN(bytes) || bytes <= 0 || !path) continue;
+            candidates.push({
+              volume: String(r.volume_uuid || r.volume_name || 'unknown'),
+              path: path,
+              depth: Number(r.depth) || path.split('/').length,
+              bytes: Math.round(bytes)
+            });
+          }
+
+          candidates.sort(function (a, b) {
+            if (a.depth !== b.depth) return a.depth - b.depth;
+            if (a.volume !== b.volume) return a.volume < b.volume ? -1 : 1;
+            return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0);
+          });
+
+          var selected = {};
+          var total = 0;
+          for (var j = 0; j < candidates.length; j++) {
+            var candidate = candidates[j];
+            var prefix = candidate.volume + ':';
+            var parts = candidate.path.split('/');
+            var ancestor = '';
+            var covered = selected[prefix + candidate.path] === 1;
+            for (var p = 0; p < parts.length - 1 && !covered; p++) {
+              ancestor = ancestor ? ancestor + '/' + parts[p] : parts[p];
+              if (selected[prefix + ancestor] === 1) covered = true;
+            }
+            if (covered) continue;
+            selected[prefix + candidate.path] = 1;
+            total += candidate.bytes;
+          }
+          return total;
+      master_item:
+        key: netapp.fsa.directories.get
+      tags:
+      - tag: component
+        value: fsa
+      units: B
+      description: Soma informativa, sem trigger, dos diretórios com inatividade igual
+        ou superior a {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias. Diretórios descendentes
+        já cobertos por um pai inativo não são somados novamente.
     discovery_rules:
     - uuid: 3ae7a80f29ef4f0d8603a87e0f0c46b3
       name: Chassis discovery
@@ -5444,7 +5515,8 @@ zabbix_export:
           é usado quando alguma faixa FSA é desconhecida.
         trigger_prototypes:
         - uuid: dcccb1f8cb084de6b453ac157fe19181
-          expression: last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.inactivity.days[{#DIRID}])>={$NETAPP.FSA.INACTIVE.CRIT.DAYS}
+          expression: last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.bytes_used[{#DIRID}])>=0
+            and last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.inactivity.days[{#DIRID}])>={$NETAPP.FSA.INACTIVE.CRIT.DAYS}
           name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação
             há pelo menos 3 anos'
           priority: HIGH
@@ -5457,13 +5529,14 @@ zabbix_export:
             terminou há pelo menos {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias. Uma pasta
             apenas sem modificação não dispara se houve acesso recente.
           event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso
-            nem modificação há pelo menos 3 anos | inatividade: {ITEM.VALUE1}; acesso
-            FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])};
+            nem modificação há pelo menos 3 anos | tamanho: {ITEM.VALUE1}; inatividade:
+            {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])};
             modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}'
-          opdata: 'Inatividade atual: {ITEM.LASTVALUE1}; limite: {$NETAPP.FSA.INACTIVE.CRIT.DAYS}
-            dias'
+          opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade atual: {ITEM.LASTVALUE2};
+            limite: {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias'
         - uuid: 1ce484b436734fc68293436765a36f58
-          expression: last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.inactivity.days[{#DIRID}])>={$NETAPP.FSA.INACTIVE.WARN.DAYS}
+          expression: last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.bytes_used[{#DIRID}])>=0
+            and last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.inactivity.days[{#DIRID}])>={$NETAPP.FSA.INACTIVE.WARN.DAYS}
             and last(/NetApp ONTAP Complete by HTTP/netapp.fsa.directory.inactivity.days[{#DIRID}])<{$NETAPP.FSA.INACTIVE.CRIT.DAYS}
           name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação
             há pelo menos 1 ano'
@@ -5478,11 +5551,11 @@ zabbix_export:
             terminou há pelo menos {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias. Uma pasta
             apenas sem modificação não dispara se houve acesso recente.
           event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso
-            nem modificação há pelo menos 1 ano | inatividade: {ITEM.VALUE1}; acesso
-            FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])};
+            nem modificação há pelo menos 1 ano | tamanho: {ITEM.VALUE1}; inatividade:
+            {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])};
             modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}'
-          opdata: 'Inatividade atual: {ITEM.LASTVALUE1}; limite: {$NETAPP.FSA.INACTIVE.WARN.DAYS}
-            dias'
+          opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade atual: {ITEM.LASTVALUE2};
+            limite: {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias'
       master_item:
         key: netapp.fsa.directories.get
       preprocessing:

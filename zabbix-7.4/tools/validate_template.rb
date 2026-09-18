@@ -297,6 +297,23 @@ raise 'FSA unknown analytics must not create inactivity' unless logs['inactivity
 recent_access = fsa_recursive_result['records'].find { |record| record['path'] == '/recent-access' }
 raise 'FSA recent access must suppress old-modification inactivity' unless recent_access['inactivity_days'] == 0 && recent_access['modified_data_period_end_epoch'] < recent_access['accessed_data_period_end_epoch']
 
+fsa_inactive_bytes_item = all_objects.find do |object|
+  object['key'] == 'netapp.fsa.inactive.bytes.total' && object.key?('uuid')
+end
+raise 'FSA inactive-directory total-space item missing' unless fsa_inactive_bytes_item
+raise 'FSA inactive-directory total-space item must have no trigger' unless Array(fsa_inactive_bytes_item['triggers']).empty?
+raise 'FSA inactive-directory total-space item must use byte units' unless fsa_inactive_bytes_item['units'] == 'B'
+fsa_inactive_bytes_script = fsa_inactive_bytes_item.fetch('preprocessing').first.fetch('parameters').first
+fsa_inactive_bytes_script = fsa_inactive_bytes_script.gsub('{$NETAPP.FSA.INACTIVE.WARN.DAYS}', '365')
+fsa_inactive_bytes_fixture = JSON.generate('records' => [
+  { 'volume_uuid' => 'vol-a', 'path' => '/people', 'depth' => 1, 'bytes_used' => 5000, 'inactivity_days' => 400 },
+  { 'volume_uuid' => 'vol-a', 'path' => '/people/archive', 'depth' => 2, 'bytes_used' => 1000, 'inactivity_days' => 500 },
+  { 'volume_uuid' => 'vol-a', 'path' => '/active', 'depth' => 1, 'bytes_used' => 2000, 'inactivity_days' => 100 },
+  { 'volume_uuid' => 'vol-a', 'path' => '/unknown', 'depth' => 1, 'bytes_used' => 9000, 'inactivity_days' => 0 },
+  { 'volume_uuid' => 'vol-b', 'path' => '/projects', 'depth' => 1, 'bytes_used' => 3000, 'inactivity_days' => 365 }
+])
+raise 'FSA inactive-directory total-space calculation or overlap removal failed' unless execute_preprocessing(fsa_inactive_bytes_script, fsa_inactive_bytes_fixture) == 8000
+
 quota_master = all_objects.find { |object| object['key'] == 'netapp.quotas.get' && object['type'] == 'HTTP_AGENT' }
 raise 'Effective quota report master item missing' unless quota_master
 raise 'Quota report must exclude generic default records' unless quota_master['url'].include?('show_default_records=false')
@@ -367,6 +384,7 @@ required_keys = %w[
   netapp.ems.events.get
   netapp.snapmirror.get
   netapp.fsa.directories.get
+  netapp.fsa.inactive.bytes.total
   netapp.fsa.directories.discovery
   netapp.fsa.directory.bytes_used[{#DIRID}]
   netapp.fsa.directory.modified_time[{#DIRID}]
@@ -460,6 +478,9 @@ end
 raise 'Obsolete FSA inode-atime prototype is still exported' if legacy_fsa_accessed_time
 fsa_inactivity_alarms.each do |alarm|
   raise 'FSA inactivity alarm does not identify the directory' unless alarm['name'].include?('{#VOLUMENAME}:{#DIRDISPLAY}')
+  raise 'FSA inactivity alarm does not include directory size in its expression' unless alarm['expression'].include?('netapp.fsa.directory.bytes_used[{#DIRID}]')
+  raise 'FSA inactivity event does not show directory size' unless alarm['event_name'].include?('tamanho: {ITEM.VALUE1}')
+  raise 'FSA inactivity event does not show event-time inactivity' unless alarm['event_name'].include?('inatividade: {ITEM.VALUE2}')
   raise 'FSA inactivity event must read the live access-bucket item' unless alarm['event_name'].include?('{?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}')
   raise 'FSA inactivity event must read the live modification-bucket item' unless alarm['event_name'].include?('{?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}')
   raise 'FSA inactivity event still uses stale discovery labels' if alarm['event_name'].include?('{#FSAACCESSEDLABEL}') || alarm['event_name'].include?('{#FSAMODIFIEDLABEL}')
@@ -543,6 +564,6 @@ puts "Graph item references: #{graph_item_references.length} resolved"
 puts "Required hardware/resource alarm items: #{required_alarm_keys.length} covered"
 puts "Macros: #{template.fetch('macros').length}"
 puts "JavaScript sources parsed: #{javascript_sources.length} (#{javascript_steps.length} preprocessing, #{script_items.length} script items)"
-puts 'JavaScript runtime fixtures: recursive FSA, quota reports, FSA top-N, shelf PSU and EMS passed'
+puts 'JavaScript runtime fixtures: recursive FSA, inactive FSA total, quota reports, FSA top-N, shelf PSU and EMS passed'
 puts "UUIDs: #{uuids.length} unique; zero overlap with official template"
 puts 'Validation: OK'
