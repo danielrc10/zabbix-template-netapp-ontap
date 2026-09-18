@@ -1941,7 +1941,7 @@ fsa_directory_prototypes << dependent_proto(
   name: 'FSA [{#VOLUMENAME}] {#DIRDISPLAY}: Possible inactivity range', key: fsa_inactivity_range_key,
   master: fsa_master_key, preprocessing: jsonpath(fsa_directory_path.call('inactivity_range')),
   component: 'fsa-directory', value_type: 'CHAR',
-  description: 'Faixa possível de inatividade derivada do início e do fim dos buckets FSA. Exemplo: 625-990 dias significa que o ONTAP só identificou o ano, não o dia exato.',
+  description: 'Faixa possível de inatividade derivada do início e do fim dos buckets FSA. Exemplo: 625-991 dias significa que o ONTAP só identificou o ano, não o dia exato.',
   extra_tags: fsa_directory_tags
 )
 

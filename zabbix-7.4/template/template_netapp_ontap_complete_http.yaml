@@ -5592,7 +5592,7 @@ zabbix_export:
           value: "{#DIRDEPTH}"
         value_type: CHAR
         description: 'Faixa possível de inatividade derivada do início e do fim dos
-          buckets FSA. Exemplo: 625-990 dias significa que o ONTAP só identificou
+          buckets FSA. Exemplo: 625-991 dias significa que o ONTAP só identificou
           o ano, não o dia exato.'
       master_item:
         key: netapp.fsa.directories.get
