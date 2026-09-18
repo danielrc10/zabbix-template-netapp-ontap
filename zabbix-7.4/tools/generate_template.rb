@@ -274,7 +274,7 @@ template['description'] = <<~DESC
   em uma única chamada. Pastas sem acesso nem modificação geram Warning após um ano e High após
   três anos, conforme as macros de inatividade.
 DESC
-template['vendor'] = { 'name' => 'Daniel Carvalho', 'version' => '1.1.0' }
+template['vendor'] = { 'name' => 'Daniel Carvalho', 'version' => '1.1.1' }
 template['tags'] = [
   { 'tag' => 'class', 'value' => 'storage' },
   { 'tag' => 'target', 'value' => 'netapp' },
@@ -1501,7 +1501,7 @@ fsa_recursive_script = <<~'JS'
     var percentages = localHistogram.percentages || [];
     var useValues = values.length > 0;
     var usePercentages = !useValues && percentages.length > 0;
-    var selected = {label: 'unknown', epoch: 0, raw_amount: 0, adjusted_amount: 0, excluded_bytes: 0};
+    var selected = {label: 'unknown', epoch: 0, start_epoch: 0, raw_amount: 0, adjusted_amount: 0, excluded_bytes: 0};
     var totalExcludedBytes = 0;
 
     if (!labels.length || (!useValues && !usePercentages)) return selected;
@@ -1521,6 +1521,7 @@ fsa_recursive_script = <<~'JS'
       if (epoch <= 0) continue;
       selected.label = String(labels[index]);
       selected.epoch = epoch;
+      selected.start_epoch = fsaPeriodStartEpoch(labels[index]);
       selected.raw_amount = rawAmount;
       selected.adjusted_amount = amount;
       break;
@@ -1639,11 +1640,18 @@ fsa_recursive_script = <<~'JS'
           var accessedDataEpoch = accessedBucket.epoch;
           var modifiedDataEpoch = modifiedBucket.epoch;
           var inactivityReferenceEpoch = 0;
+          var inactivityReferenceStartEpoch = 0;
           if (!analytics.incomplete_data && accessedDataEpoch > 0 && modifiedDataEpoch > 0) {
             inactivityReferenceEpoch = Math.max(accessedDataEpoch, modifiedDataEpoch);
+            inactivityReferenceStartEpoch = Math.max(accessedBucket.start_epoch, modifiedBucket.start_epoch);
           }
           var inactivityDays = inactivityReferenceEpoch > 0 ?
             Math.max(0, Math.floor((Math.floor(started / 1000) - inactivityReferenceEpoch) / 86400)) : 0;
+          var inactivityMaximumDays = inactivityReferenceStartEpoch > 0 ?
+            Math.max(inactivityDays, Math.floor((Math.floor(started / 1000) - inactivityReferenceStartEpoch) / 86400)) : 0;
+          var inactivityRange = inactivityReferenceEpoch <= 0 ? 'unknown' :
+            (inactivityMaximumDays > 0 ? inactivityDays + '-' + inactivityMaximumDays + ' dias' :
+              'pelo menos ' + inactivityDays + ' dias');
           var depth = parent.depth + 1;
           result.records.push({
             id: stableId(volume.uuid, childPath),
@@ -1677,7 +1685,9 @@ fsa_recursive_script = <<~'JS'
             accessed_data_period_end_epoch: accessedDataEpoch,
             modified_data_period_end_epoch: modifiedDataEpoch,
             inactivity_reference_epoch: inactivityReferenceEpoch,
-            inactivity_days: inactivityDays
+            inactivity_days: inactivityDays,
+            inactivity_maximum_days: inactivityMaximumDays,
+            inactivity_range: inactivityRange
           });
 
           if (depth < maxDepth) queue.push({path: childPath, depth: depth});
@@ -1897,11 +1907,12 @@ fsa_directory_prototypes << dependent_proto(
 )
 
 fsa_inactivity_key = 'netapp.fsa.directory.inactivity.days[{#DIRID}]'
+fsa_inactivity_range_key = 'netapp.fsa.directory.inactivity.range[{#DIRID}]'
 fsa_directory_prototypes << dependent_proto(
-  name: 'FSA [{#VOLUMENAME}] {#DIRDISPLAY}: Days without access or modification', key: fsa_inactivity_key,
+  name: 'FSA [{#VOLUMENAME}] {#DIRDISPLAY}: Minimum days without access or modification', key: fsa_inactivity_key,
   master: fsa_master_key, preprocessing: jsonpath(fsa_directory_path.call('inactivity_days')),
   component: 'fsa-directory', units: '!dias',
-  description: 'Dias desde a atividade mais recente entre acesso e modificação dos dados descendentes. Só aumenta quando ambos estão antigos; zero também é usado quando alguma faixa FSA é desconhecida.',
+  description: 'Limite mínimo conservador calculado pelo fim da faixa FSA mais recente. Rótulos anuais não informam o dia exato, portanto várias pastas do mesmo ano podem ter o mesmo valor. Só aumenta quando acesso e modificação estão antigos; zero também é usado quando alguma faixa FSA é desconhecida.',
   extra_tags: fsa_directory_tags,
   triggers: [
     proto_trigger(
@@ -1911,8 +1922,8 @@ fsa_directory_prototypes << dependent_proto(
       name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 3 anos',
       priority: 'HIGH', scope: 'capacity',
       description: 'A faixa FSA mais recente tanto de acesso quanto de modificação terminou há pelo menos {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias. Uma pasta apenas sem modificação não dispara se houve acesso recente.',
-      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 3 anos | tamanho: {ITEM.VALUE1}; inatividade: {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
-      opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade atual: {ITEM.LASTVALUE2}; limite: {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias'
+      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 3 anos | tamanho: {ITEM.VALUE1}; inatividade mínima: {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
+      opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade mínima atual: {ITEM.LASTVALUE2}; limite: {$NETAPP.FSA.INACTIVE.CRIT.DAYS} dias'
     ),
     proto_trigger(
       id: 'fsa-directory-inactive-warning',
@@ -1921,10 +1932,17 @@ fsa_directory_prototypes << dependent_proto(
       name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 1 ano',
       priority: 'WARNING', scope: 'capacity',
       description: 'A faixa FSA mais recente tanto de acesso quanto de modificação terminou há pelo menos {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias. Uma pasta apenas sem modificação não dispara se houve acesso recente.',
-      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 1 ano | tamanho: {ITEM.VALUE1}; inatividade: {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
-      opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade atual: {ITEM.LASTVALUE2}; limite: {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias'
+      event_name: 'NetApp ONTAP: Pasta {#VOLUMENAME}:{#DIRDISPLAY} sem acesso nem modificação há pelo menos 1 ano | tamanho: {ITEM.VALUE1}; inatividade mínima: {ITEM.VALUE2}; acesso FSA: {?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}; modificação FSA: {?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}',
+      opdata: 'Tamanho atual: {ITEM.LASTVALUE1}; inatividade mínima atual: {ITEM.LASTVALUE2}; limite: {$NETAPP.FSA.INACTIVE.WARN.DAYS} dias'
     )
   ]
+)
+fsa_directory_prototypes << dependent_proto(
+  name: 'FSA [{#VOLUMENAME}] {#DIRDISPLAY}: Possible inactivity range', key: fsa_inactivity_range_key,
+  master: fsa_master_key, preprocessing: jsonpath(fsa_directory_path.call('inactivity_range')),
+  component: 'fsa-directory', value_type: 'CHAR',
+  description: 'Faixa possível de inatividade derivada do início e do fim dos buckets FSA. Exemplo: 625-990 dias significa que o ONTAP só identificou o ano, não o dia exato.',
+  extra_tags: fsa_directory_tags
 )
 
 fsa_directory_discovery_script = <<~JS

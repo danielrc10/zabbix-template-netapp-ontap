@@ -50,6 +50,7 @@ Padrões do FSA:
 - Warning após 365 dias;
 - High após 1095 dias;
 - só alarma quando acesso **e** modificação estão antigos;
+- dias de inatividade são o mínimo garantido pelo bucket FSA; o item `Possible inactivity range` mostra a faixa possível;
 - o evento mostra o tamanho da pasta;
 - `FSA: Espaço total de pastas inativas` soma todas as pastas acima do limite de Warning, sem gerar alarme.
 
@@ -86,6 +87,6 @@ ruby zabbix-7.4/tools/validate_template.rb
 
 FSA and quotas are optional and select no volumes by default. Configure `{$NETAPP.FSA.VOLUME.MATCHES}` and `{$NETAPP.QUOTA.VOLUME.MATCHES}` with a volume-name regex. For example, `^(volume_users|volume_projects)$` selects two volumes, while `^volume_users$` selects one.
 
-FSA defaults to first-level directories. It warns after 365 days and raises High severity after 1095 days only when both access and modification data are old. Events show the directory size, and `FSA: Espaço total de pastas inativas` provides a non-alerting total. FSA and atime updates must be enabled on selected volumes.
+FSA defaults to first-level directories. It warns after 365 days and raises High severity after 1095 days only when both access and modification data are old. Inactivity days are the minimum guaranteed by the FSA bucket; `Possible inactivity range` shows its possible range. Events show the directory size, and `FSA: Espaço total de pastas inativas` provides a non-alerting total. FSA and atime updates must be enabled on selected volumes.
 
 Ethernet discovery includes only administratively enabled ports. LAG/VLAN capacity is resolved automatically, utilization is capped at 100%, and unknown capacity does not trigger utilization alarms. Aggregate alerts use physical usage instead of thick-provisioned reservations.

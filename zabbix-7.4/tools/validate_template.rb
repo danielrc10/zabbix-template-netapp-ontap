@@ -292,6 +292,9 @@ raise 'FSA quarter-label conversion failed' unless projects['accessed_data_perio
 raise 'FSA interval-label conversion failed' unless projects['modified_data_period_end_epoch'] == Time.utc(2021, 6, 30, 23, 59, 59).to_i
 raise 'FSA inactivity must use the newest of access and modification' unless projects['inactivity_reference_epoch'] == projects['accessed_data_period_end_epoch']
 raise 'FSA inactivity age calculation failed' unless projects['inactivity_days'] >= 1095
+raise 'FSA inactivity maximum must not be lower than its minimum' unless projects['inactivity_maximum_days'] >= projects['inactivity_days']
+expected_inactivity_range = "#{projects['inactivity_days']}-#{projects['inactivity_maximum_days']} dias"
+raise 'FSA inactivity range calculation failed' unless projects['inactivity_range'] == expected_inactivity_range
 logs = fsa_recursive_result['records'].find { |record| record['path'] == '/logs' }
 raise 'FSA unknown analytics must not create inactivity' unless logs['inactivity_days'] == 0 && logs['inactivity_reference_epoch'] == 0
 recent_access = fsa_recursive_result['records'].find { |record| record['path'] == '/recent-access' }
@@ -480,11 +483,15 @@ fsa_inactivity_alarms.each do |alarm|
   raise 'FSA inactivity alarm does not identify the directory' unless alarm['name'].include?('{#VOLUMENAME}:{#DIRDISPLAY}')
   raise 'FSA inactivity alarm does not include directory size in its expression' unless alarm['expression'].include?('netapp.fsa.directory.bytes_used[{#DIRID}]')
   raise 'FSA inactivity event does not show directory size' unless alarm['event_name'].include?('tamanho: {ITEM.VALUE1}')
-  raise 'FSA inactivity event does not show event-time inactivity' unless alarm['event_name'].include?('inatividade: {ITEM.VALUE2}')
+  raise 'FSA inactivity event does not show event-time minimum inactivity' unless alarm['event_name'].include?('inatividade mínima: {ITEM.VALUE2}')
   raise 'FSA inactivity event must read the live access-bucket item' unless alarm['event_name'].include?('{?last(//netapp.fsa.directory.accessed_newest_label[{#DIRID}])}')
   raise 'FSA inactivity event must read the live modification-bucket item' unless alarm['event_name'].include?('{?last(//netapp.fsa.directory.modified_newest_label[{#DIRID}])}')
   raise 'FSA inactivity event still uses stale discovery labels' if alarm['event_name'].include?('{#FSAACCESSEDLABEL}') || alarm['event_name'].include?('{#FSAMODIFIEDLABEL}')
 end
+fsa_inactivity_range_item = all_objects.find do |object|
+  object['key'] == 'netapp.fsa.directory.inactivity.range[{#DIRID}]' && object.key?('uuid')
+end
+raise 'FSA directory inactivity range item missing' unless fsa_inactivity_range_item
 
 quota_space_hard_item = all_objects.find do |object|
   object['key'] == 'netapp.quota.space.hard_limit.percent[{#QUOTAID}]' && object.key?('uuid')

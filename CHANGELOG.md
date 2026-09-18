@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.1] - 2026-09-18
+
+### Fixed
+
+- Clarified that FSA inactivity days are a conservative minimum derived from the end of an ONTAP time bucket.
+- Added a per-directory `Possible inactivity range` item for coarse yearly FSA buckets.
+- Marked inactivity as minimum in FSA item and event names.
+
 ## [1.1.0] - 2026-09-18
 
 ### Added
